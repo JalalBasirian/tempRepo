@@ -1,135 +1,16 @@
 #!/usr/bin/env python3
-"""
-تعیین نقش ها در ماتریس گزارش مافیا
+# -*- coding: utf-8 -*-
 
-مقدارها در ماتریس n×n:
-  1  => بازیکن i و j یک نقش (هر دو شهروند یا هر دو مافیا)
- -1  => بازیکن i و j نقش متفاوت
-  0  => بدون اطلاعات
+# =========================
+# تنظیم نگاشت و سیاست مؤلفه
+# =========================
+OUTPUT_MAPPING   = "1=mafia"   # یا "1=mafia"
+COMPONENT_POLICY = "start=1"     # "start=1" | "start=0" | "minlex"
 
-هدف: تولید رشته ای از 0/1 به طول n
- 1 = شهروند (سفید)
- 0 = مافیا (سیاه)
-
-اگر تناقض (عدم دو رنگی یا تساوی و تضاد همزمان) وجود داشته باشد چاپ IMPOSSIBLE.
-سیاست رفع چند پاسخ ممکن: کامپوننت شامل بازیکن 0 رنگ 1 می گیرد؛ رنگ های دیگر در پیمایش BFS تعیین می شوند؛
-اگر هنوز چند پاسخ (انعکاس کلی) ممکن باشد همان حالتِ به دست آمده چاپ می شود.
-
-ورودی (یکی از دو فرمت):
-1) n سپس n خط شامل n مقدار از بین {-1,0,1}
-2) یک لیست پایتونی قابل literal_eval مانند: [[1,1,0], [0,1,-1], ...]
-
-خروجی: رشته 0/1 یا IMPOSSIBLE
-
-نمونه:
-Input:
-6\n1 1 0 -1 1 1\n0 1 0 0 1 0\n0 -1 1 1 -1 0\n0 0 1 1 -1 -1\n1 1 0 0 1 1\n1 1 -1 -1 1 1
-Output:
-110011
-"""
-from __future__ import annotations
-from collections import deque, defaultdict
-import sys, ast
-
-class DSU:
-    __slots__ = ("p","r")
-    def __init__(self, n:int):
-        self.p = list(range(n))
-        self.r = [0]*n
-    def find(self, x:int) -> int:
-        while self.p[x] != x:
-            self.p[x] = self.p[self.p[x]]
-            x = self.p[x]
-        return x
-    def union(self, a:int, b:int):
-        a = self.find(a); b = self.find(b)
-        if a == b: return
-        if self.r[a] < self.r[b]:
-            a, b = b, a
-        self.p[b] = a
-        if self.r[a] == self.r[b]:
-            self.r[a] += 1
-
-class InferenceError(Exception):
-    pass
-
-def infer_roles(matrix:list[list[int]]) -> str:
-    n = len(matrix)
-    if n == 0:
-        return ""
-    for row in matrix:
-        if len(row) != n:
-            raise InferenceError("ماتریس باید مربعی باشد")
-    dsu = DSU(n)
-    # 1) Union for equalities (1)
-    for i in range(n):
-        mi = matrix[i]
-        for j in range(n):
-            v = mi[j]
-            if v == 1:
-                dsu.union(i, j)
-    # 2) Build inequality graph between component roots
-    adj: dict[int,set[int]] = defaultdict(set)
-    for i in range(n):
-        for j in range(n):
-            if matrix[i][j] == -1:
-                a = dsu.find(i); b = dsu.find(j)
-                if a == b:
-                    raise InferenceError("تناقض: تساوی و تضاد همزمان")
-                adj[a].add(b); adj[b].add(a)
-    # 3) Bipartite coloring of component graph
-    color: dict[int,int] = {}
-    roots = {dsu.find(i) for i in range(n)}
-    # Ensure root of player 0 visited first, color=1 (citizen)
-    ordered = sorted(roots, key=lambda r: (r != dsu.find(0), r))
-    for r in ordered:
-        if r in color: continue
-        # First component containing player 0 -> color 1, others also start with 1 (arbitrary) for determinism
-        start_color = 1
-        color[r] = start_color
-        q = deque([r])
-        while q:
-            u = q.popleft()
-            for v in adj[u]:
-                if v not in color:
-                    color[v] = 1 - color[u]
-                    q.append(v)
-                elif color[v] == color[u]:
-                    raise InferenceError("تناقض: گراف دو رنگ نیست")
-    # 4) Map each original node to its component's color
-    return ''.join(str(color[dsu.find(i)]) for i in range(n))
-
-def parse_input(text:str) -> list[list[int]]:
-    text = text.strip()
-    if not text:
-        return []
-    # Try literal list
-    if text[0] in '[(':
-        try:
-            obj = ast.literal_eval(text)
-            # Normalize to list of lists
-            matrix = [list(map(int, row)) for row in obj]
-            return matrix
-        except Exception:
-            pass
-    # Otherwise assume first token n then n lines or flat tokens
-    tokens = text.split()
-    n = int(tokens[0])
-    nums = list(map(int, tokens[1:]))
-    if len(nums) != n*n:
-        # Maybe lines separated by newlines (already split). If mismatch raise.
-        raise ValueError("تعداد اعداد با n*n تطابق ندارد")
-    matrix = [nums[i*n:(i+1)*n] for i in range(n)]
-    return matrix
-
-def main():
-    import argparse, os
-    parser = argparse.ArgumentParser(description="استنتاج نقش ها از ماتریس گزارش مافیا")
-    parser.add_argument("--matrix", help="لیست ماتریس به صورت literal مثلا '[[1,1,0],[0,1,-1],[0,-1,1]]'", default=None)
-    parser.add_argument("--file", help="مسیر فایل حاوی ماتریس", default=None)
-    args = parser.parse_args()
-
-    sample = [
+# =========================
+# ورودی‌ها (به‌صورت متغیّر)
+# =========================
+A = [
 [1, 0, 0, 0, 0, 1, -1, -1, 0],
 [-1, 1, 1, 1, -1, -1, 0, 1, 1],
 [0, 0, 1, 1, 0, 0, 1, 1, 1],
@@ -141,28 +22,147 @@ def main():
 [-1, 1, 0, 1, 0, 0, 0, 1, 1]
 ]
 
-    try:
-        if args.matrix:
-            matrix = parse_input(args.matrix)
-        elif args.file:
-            with open(args.file, 'r', encoding='utf-8') as f:
-                matrix = parse_input(f.read())
-        else:
-            # If stdin has data and is not a TTY, read it; else use sample
-            if not sys.stdin.isatty():
-                data = sys.stdin.read()
-                if data.strip():
-                    matrix = parse_input(data)
-                else:
-                    matrix = sample
-            else:
-                matrix = sample
-        ans = infer_roles(matrix)
-        print(ans)
-    except InferenceError:
-        print("IMPOSSIBLE")
-    except Exception as e:
-        print(f"INPUT_ERROR: {e}")
+points = [(0,0), (4,2), (6,6), (0,5), (9,9)]  # برای مسئلهٔ فیل
 
+# =========================
+# حل‌گر «صبح مافیا»
+# =========================
+from collections import deque
+
+def _apply_mapping(sign_list):
+    """
+    sign_list: لیست مقادیر +1 (citizen) یا -1 (mafia) برای هر نفر.
+    OUTPUT_MAPPING: "1=citizen" یا "1=mafia"
+    """
+    if OUTPUT_MAPPING == "1=citizen":
+        return ''.join('1' if s == +1 else '0' for s in sign_list)
+    elif OUTPUT_MAPPING == "1=mafia":
+        return ''.join('1' if s == -1 else '0' for s in sign_list)
+    else:
+        raise ValueError("OUTPUT_MAPPING must be '1=citizen' or '1=mafia'")
+
+def mafia_solver(A):
+    n = len(A)
+    # تناقض فوری روی قطر
+    for i in range(n):
+        if A[i][i] == -1:
+            return None
+
+    # گراف علامت‌دار: x[j] = w * x[i]
+    g = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i != j and A[i][j] != 0:
+                g[i].append((j, A[i][j]))
+
+    x = [None]*n  # +1 = citizen, -1 = mafia
+
+    def solve_component(start_node):
+        # سیاست مؤلفه: شروع ثابت یا minlex
+        if COMPONENT_POLICY == "minlex":
+            start_candidates = [+1, -1]
+        elif COMPONENT_POLICY == "start=1":
+            start_candidates = [+1]
+        elif COMPONENT_POLICY == "start=0":
+            start_candidates = [-1]
+        else:
+            raise ValueError("COMPONENT_POLICY must be 'start=1', 'start=0', or 'minlex'")
+
+        best = None  # (binary_string_for_component, nodes, vals)
+
+        for start_val in start_candidates:
+            ok = True
+            vals = {start_node: start_val}
+            nodes = []
+            q = deque([start_node])
+
+            while q and ok:
+                u = q.popleft()
+                nodes.append(u)
+                for v, w in g[u]:
+                    need = w * vals[u]
+                    if v not in vals:
+                        vals[v] = need
+                        q.append(v)
+                    elif vals[v] != need:
+                        ok = False
+                        break
+
+            if not ok:
+                best = None
+                # اگر یکی از کاندیداها تناقض داد، ممکن است دیگری جواب بدهد (فقط در minlex مهم است)
+                if COMPONENT_POLICY != "minlex":
+                    return None
+                else:
+                    continue
+
+            if COMPONENT_POLICY == "minlex":
+                # نگاشت باینری مؤلفه را بر اساس OUTPUT_MAPPING بساز و کمینه‌ی لغت‌نامه‌ای را نگه‌دار
+                signs_comp = [vals[i] for i in nodes]
+                bits_comp = _apply_mapping(signs_comp)
+                if best is None or bits_comp < best[0]:
+                    best = (bits_comp, nodes, vals)
+            else:
+                best = ("", nodes, vals)
+                break
+
+        return best
+
+    for s in range(n):
+        if x[s] is not None:
+            continue
+        result = solve_component(s)
+        if result is None:
+            return None
+        _, nodes, vals = result
+        for i in nodes:
+            x[i] = vals[i]
+
+    return _apply_mapping(x)
+
+# =========================
+# حل‌گر «مسیر فیل» 10×10
+# =========================
+SIZE = 10
+def _inb(x,y): return 0 <= x < SIZE and 0 <= y < SIZE
+
+def _bishop_segment(p, q):
+    (x1,y1),(x2,y2) = p, q
+    if (x1,y1) == (x2,y2):
+        return [p]
+    dx, dy = abs(x1-x2), abs(y1-y2)
+    if dx == dy:  # روی یک قطر
+        return [p, q]
+    if (x1+y1) % 2 != (x2+y2) % 2:
+        return None  # غیرهم‌رنگ، ناممکن
+    s1, d1 = x1+y1, x1-y1
+    s2, d2 = x2+y2, x2-y2
+    cand = [
+        ((s1+d2)//2, (s1-d2)//2),
+        ((s2+d1)//2, (s2-d1)//2),
+    ]
+    for cx, cy in cand:
+        if 2*cx in (s1+d2, s2+d1) and 2*cy in (s1-d2, s2-d1) and _inb(cx,cy):
+            return [p, (cx,cy), q]
+    return None
+
+def bishop_chain(points):
+    if not points:
+        return []
+    path = [points[0]]
+    for a, b in zip(points, points[1:]):
+        seg = _bishop_segment(a, b)
+        if seg is None:
+            return None
+        path.extend(seg[1:])  # حذف تکرارِ نقطهٔ اتصال
+    return path
+
+# =========================
+# اجرای نمونه‌ها
+# =========================
 if __name__ == "__main__":
-    main()
+    ans_mafia = mafia_solver(A)
+    print("Mafia:", ans_mafia if ans_mafia is not None else "inconsistent")
+
+    bp = bishop_chain(points)
+    print("Bishop:", "impossible" if bp is None else bp)
