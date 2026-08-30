@@ -1,0 +1,155 @@
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+
+
+
+
+
+SECRET_KEY=replace-with-a-long-random-secret
+DEBUG=False
+ALLOWED_HOSTS=*
+CORS_ALLOWED_ORIGINS=http://YOUR_SERVER_IP
+CSRF_TRUSTED_ORIGINS=http://YOUR_SERVER_IP
+
+DB_NAME=dpms_enterprise
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=db
+DB_PORT=5432
+
+REDIS_URL=redis://redis:6379/0
+
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=noreply@localhost
+
+MELIPAYAMAK_USERNAME=
+MELIPAYAMAK_PASSWORD=
+MELIPAYAMAK_FROM_NUMBER=
+SESSION_COOKIE_SECURE=False
+CSRF_COOKIE_SECURE=False
+SECURE_SSL_REDIRECT=False
+
+Replace YOUR_SERVER_IP with the actual IP, e.g. http://185.22.44.211.
+
+Since you do not have a domain yet, ALLOWED_HOSTS=* is acceptable for the initial setup
+
+
+cd /opt/preciselab
+docker compose up -d --build
+
+docker compose ps
+docker compose logs -f web
+
+if needed:
+docker compose exec web python manage.py migrate --noinput
+docker compose exec web python manage.py collectstatic --noinput
+docker compose exec web python manage.py check
+
+
+
+install nginx:
+sudo apt-get install -y nginx
+create config:
+sudo nano /etc/nginx/sites-available/preciselab
+
+use:
+
+server {
+    listen 80;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+enable it: 
+
+sudo ln -sf /etc/nginx/sites-available/preciselab /etc/nginx/sites-enabled/preciselab
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+
+Now the app should be reachable at:
+http://YOUR_SERVER_IP
+
+
+If you want HTTPS on an IP, you can use a self-signed certificate:
+sudo apt-get install -y openssl
+mkdir -p /etc/ssl/preciselab
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/ssl/preciselab/key.pem \
+  -out /etc/ssl/preciselab/cert.pem \
+  -days 365 \
+  -subj "/CN=YOUR_SERVER_IP"
+
+Then configure Nginx with SSL:
+
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+
+    ssl_certificate /etc/ssl/preciselab/cert.pem;
+    ssl_certificate_key /etc/ssl/preciselab/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+
+Then reload Nginx:
+sudo nginx -t
+sudo systemctl reload nginx
+
+open:
+https://YOUR_SERVER_IP
+
+
+
+Best path for now
+Use this configuration order:
+
+IP-only server → Nginx on 80/443
+self-signed cert if no domain yet
+add real domain later and swap the cert and ALLOWED_HOSTS
+If you want, I can give you:
+
+a copy-paste install-docker.sh script, or
+a ready-to-use Nginx config for IP-only deployment.
+
+
+
+
+
+
